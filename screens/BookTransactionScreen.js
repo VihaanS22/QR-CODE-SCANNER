@@ -1,7 +1,9 @@
 import React from 'react';
-import { Text, View, TouchableOpacity,Image, StyleSheet, TextInput } from 'react-native';
+import { Text, View, TouchableOpacity,Image, StyleSheet, TextInput} from 'react-native';
 import * as Permissions from 'expo-permissions';
 import { BarCodeScanner } from 'expo-barcode-scanner';
+import firebase from 'firebase';
+import db from '../config';
 
 export default class ScanScreen extends React.Component {
     constructor(){
@@ -9,10 +11,11 @@ export default class ScanScreen extends React.Component {
       this.state = {
         hasCameraPermissions: null,
         scanned: false,
-        scannedData: '',
+       transactionMessage : '',
         buttonState: 'normal',
         scannedBookId : '',
-        scannedStudentId : ''
+        scannedStudentId : '',
+
       }
     }
 
@@ -29,23 +32,67 @@ export default class ScanScreen extends React.Component {
       });
     }
 
-    handleBarCodeScanned = async({type, data})=>{ 
-      const {buttonState} = this.state 
-      if(buttonState==="BookId"){ 
-        this.setState({ 
-          scanned: true, 
-          scannedBookId: data, 
-          buttonState: 'normal' 
-        }); 
+    handleBarCodeScanned = async ({type, data})=>{ 
+      const { buttonState} = this.state 
+      if(buttonState === "BookId"){ 
+        this.setState({ scanned : true, scannedBookId : data, buttonState : 'normal' }); 
       } 
-      else if(buttonState==="StudentId"){ 
-        this.setState({ 
-          scanned: true, 
-          scannedStudentId: data, 
-          buttonState: 'normal' 
-        }); 
-      }
-     }
+      else if(buttonState === "StudentId"){
+         this.setState({ scanned : true, scannedStudentId : data, buttonState : 'normal' })
+         } 
+        }
+
+        handleTransaction = async()=>{ 
+          var transactionMessage = null;
+           db.collection("books").doc(this.state.scannedBookId).get() .then((doc)=>{ 
+             var book = doc.data() 
+             if(book.bookAvailability){ 
+               this.initiateBookIssue(); 
+               transactionMessage = "Book Issued" 
+              } 
+              else{ this.initiateBookReturn(); 
+                transactionMessage = "Book Returned" 
+              } 
+            })
+               this.setState({ transactionMessage : transactionMessage }) }
+
+               initiateBookIssue = async ()=>{ 
+                 //add a transaction 
+                 db.collection("transaction").add({
+                    'studentId' : this.state.scannedStudentId, 
+                    'bookId' : this.state.scannedBookId, 
+                    'data' : firebase.firestore.Timestamp.now().toDate(), 
+                    'transactionType' : "Issue" 
+                  }) 
+                  //change book status 
+                  db.collection("books").doc(this.state.scannedBookId).update({ 
+                    'bookAvailability' : false 
+                  }) 
+                  //change number of issued books for student 
+                  db.collection("students").doc(this.state.scannedStudentId).update({
+                     'numberOfBooksIssued' : firebase.firestore.FieldValue.increment(1) }) 
+                     this.setState({ scannedStudentId : '', scannedBookId: '' 
+                    }) 
+                  }
+
+                  initiateBookReturn = async ()=>{ 
+                    //add a transaction 
+                    db.collection("transactions").add({ 
+                      'studentId' : this.state.scannedStudentId, 
+                      'bookId' : this.state.scannedBookId, 
+                      'date' : firebase.firestore.Timestamp.now().toDate(), 
+                      'transactionType' : "Return"
+                     }) 
+                     //change book status 
+                     db.collection("books").doc(this.state.scannedBookId).update({
+                        'bookAvailability' : true 
+                      }) 
+                      //change book status
+                       db.collection("students").doc(this.state.scannedStudentId).update({ 
+                         'numberOfBooksIssued' : firebase.firestore.FieldValue.increment(-1) })
+                          this.setState({ scannedStudentId : '', scannedBookId : ''
+                         }) 
+                        }
 
     render() {
       const hasCameraPermissions = this.state.hasCameraPermissions;
@@ -88,6 +135,12 @@ export default class ScanScreen extends React.Component {
               <Text style={styles.buttonText}>Scan</Text> 
               </TouchableOpacity> 
               </View> 
+              <TouchableOpacity style = {styles.submitButton} 
+             onPress={async()=>{ 
+               var transactionMessage = await this.handleTransaction(); 
+              }}>
+                <Text style = {styles.submitButtonText}>Submit</Text>
+              </TouchableOpacity>
               </View>
         );
       }
@@ -140,6 +193,19 @@ export default class ScanScreen extends React.Component {
       width: 50, 
       borderWidth: 1.5, 
       borderLeftWidth: 0 
-    }
+    },
+
+    submitButton:{ 
+      backgroundColor: '#FBC02D', 
+      width: 100, height:50 
+    }, 
+    
+    submitButtonText:{
+       padding: 10, 
+       textAlign: 'center', 
+       fontSize: 20, 
+       fontWeight:"bold",
+        color: 'white' 
+      }
 
   });
